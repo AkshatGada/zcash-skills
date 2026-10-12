@@ -33,6 +33,7 @@ FACTS = [
     {"id": "zakura-image", "value": "zakuracore/zakura:1.6.0", "pattern": r"zakuracore/zakura:[0-9a-zA-Z.\-]+",
      "upstream": "https://raw.githubusercontent.com/o/r/main/runtime.rs", "extract": r'const ZAKURA_IMAGE: &str = "([^"]+)"'},
     {"id": "faucet", "kind": "forbid", "pattern": r"faucet has no idempotency", "source": "api.rs"},
+    {"id": "zip317", "kind": "forbid", "negation": "true", "pattern": r"ZIPs? ?317[^\n]{0,50}\bconsensus\b", "source": "ZIP 317"},
     {"id": "ths-version", "value": "ths 0.3.0", "pattern": r"ths \d+\.\d+\.\d+"},
 ]
 RUNTIME_RS = 'const ZAKURA_IMAGE: &str = "zakuracore/zakura:1.6.0";\n'
@@ -325,6 +326,23 @@ class VerdictTests(unittest.TestCase):
         results, _ = run(["The address faucet has no idempotency key."])
         self.assertEqual(self.verdicts(results), ["❌"])
 
+    def test_truncated_version_is_a_contradiction(self):
+        # `:1.6` must not ride on `:1.6.0` — truncation used to slip past
+        # containment matching.
+        results, _ = run(["THS pins `zakuracore/zakura:1.6`."])
+        self.assertEqual(self.verdicts(results), ["❌"])
+
+    def test_forbid_with_negation_flags_the_positive_claim_only(self):
+        results, _ = run(["ZIP 317 is a consensus validity rule."])
+        self.assertEqual(self.verdicts(results), ["❌"])
+        results, _ = run(["ZIP 317 is not a consensus validity rule."])
+        self.assertNotIn("❌", self.verdicts(results))
+
+    def test_negation_in_a_previous_sentence_does_not_excuse(self):
+        line = "Blocks do not expire. ZIP 317 is a consensus rule."
+        hit = re.search(FACTS[2]["pattern"], line)
+        self.assertFalse(cf.negated(line, hit.start(), hit.end()))
+
     def test_linked_source_verifies_its_values(self):
         url = "https://github.com/zcash/zips/blob/main/zips/zip-0259.md"
         raw = "https://raw.githubusercontent.com/zcash/zips/main/zips/zip-0259.md"
@@ -519,9 +537,29 @@ class ReportTests(unittest.TestCase):
 class CheckFactsTests(unittest.TestCase):
     def test_agrees_ignores_commas_backticks_and_case(self):
         self.assertTrue(cf.agrees({"value": "4,465,026"}, "4465026"))
-        self.assertTrue(cf.agrees({"value": "Rust 1.98.0"}, "1.98.0"))
+        self.assertTrue(cf.agrees({"value": "1.98.0"}, "1.98.0"))
         self.assertTrue(cf.agrees({"value": "0x77190AD9"}, "0x77190ad9"))
         self.assertFalse(cf.agrees({"value": "4,465,026"}, "4465027"))
+
+    def test_agrees_is_exact_normalised_equality(self):
+        # A truncated oracle value must not pass, whichever side it lands on.
+        self.assertFalse(cf.agrees({"value": "zakuracore/zakura:1.6.0"}, "zakuracore/zakura:1.6"))
+        self.assertFalse(cf.agrees({"value": "zakuracore/zakura:1.6"}, "zakuracore/zakura:1.6.0"))
+        self.assertFalse(cf.agrees({"value": "1.98.0"}, "1.98"))
+
+    def test_value_in_hit_allows_a_span_but_never_a_truncation(self):
+        fact = {"value": "4,465,026"}
+        self.assertTrue(cf.value_in_hit(fact, "NU7 activated on Testnet at 4,465,026"))
+        self.assertTrue(cf.value_in_hit(fact, "4,465,026"))
+        self.assertFalse(cf.value_in_hit(fact, "4,465,0260"))
+        self.assertFalse(cf.value_in_hit({"value": "zakuracore/zakura:1.6.0"}, "zakuracore/zakura:1.6"))
+
+    def test_extract_failure_is_a_distinct_upstream_error(self):
+        fact = {"id": "x", "value": "v", "upstream": "https://raw.githubusercontent.com/o/r/main/f.rs",
+                "extract": r"WANT = (\d+)"}
+        with self.assertRaises(cf.ExtractError):
+            cf.upstream_value(fact, fetch=lambda url: "nothing here")
+        self.assertTrue(issubclass(cf.ExtractError, cf.UpstreamError))
 
     def test_repo_oracles_extract_from_upstream_formats(self):
         facts = {f["id"]: f for f in cf.load_facts()}

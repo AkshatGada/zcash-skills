@@ -44,7 +44,7 @@ NU7 activated on Testnet at height 4,465,026 (2026-10-06); Mainnet height is ass
 Deployed changes:
 
 - **ZIP 218** — block target spacing 75 s → 25 s. Per-block shielded limits: `GlobalShieldedBudget = 330` units shared by Orchard+Ironwood Actions (each Action costs 1), per-pool caps of 330 Orchard and 330 Ironwood actions, `SaplingBlockIOLimit = 300` spends+outputs, `SproutBlockJoinSplitLimit = 0`. Testnet minimum-difficulty threshold moves from 6 to 18 block spacings (block time > 450 s after parent). Block subsidies rescale so halvings are preserved.
-- **ZIP 2003** — version 4 transactions invalid → the Sprout pool is permanently unspendable.
+- **ZIP 2003** — version 4 transactions invalid → the Sprout pool is unspendable while v4 is disallowed. ZIP 2003 deliberately does not claim permanence and advises holders to move funds out of Sprout before activation.
 - **ZIP 235** — 60% of transaction fees removed from circulation (block-level consensus calculation, not a tx field).
 - **ZIP 237** — halving-preserving Network Sustainability Mechanism; `NSM_REISSUANCE_HEIGHT` Testnet 7,305,222, Mainnet per formula.
 - **ZIP 207 rev 2 / ZIP 214 rev 3 / ZIP 2008** — funding-stream address periods, end heights (NU7 activation heights must be multiples of 3), and the `FS_FPF_ZCG_H3` address list.

@@ -535,9 +535,11 @@ def fact_check(line, facts, sources, upstream_cache, pr_fact_lines=()):
             hit = m.group(0)
             fid = esc(f["id"])
             if f.get("kind") == "forbid":
+                if f.get("negation") == "true" and check_facts.negated(line, m.start(), m.end()):
+                    continue
                 contradictions.append(f"{code(hit)} is a stale claim ({fid}: {esc(f.get('source', 'see versioned-facts.md'))})")
                 continue
-            matches_base = f["value"] in hit or hit in f["value"]
+            matches_base = check_facts.value_in_hit(f, hit)
             updated_here = not matches_base and any(hit in added for added in pr_fact_lines)
             current, err = None, None
             if "upstream" in f and "extract" not in f:
@@ -552,7 +554,7 @@ def fact_check(line, facts, sources, upstream_cache, pr_fact_lines=()):
                         upstream_cache[f["id"]] = (None, "upstream unreachable")
                 current, err = upstream_cache[f["id"]]
             if current is not None:
-                if check_facts.agrees({"value": hit}, current):
+                if check_facts.value_in_hit({"value": current}, hit):
                     confirmed.add(hit)
                     if not matches_base:
                         notes.append(f"{fid}: upstream now says {code(current)}; versioned-facts.md on the base branch still says {code(f['value'])}")

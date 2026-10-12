@@ -58,6 +58,11 @@ class HostNotAllowed(UpstreamError):
     """A URL outside the allowlist; it was not fetched."""
 
 
+class ExtractError(UpstreamError):
+    """The oracle was fetched but `extract` matched nothing — the upstream
+    format changed, which is a different failure than an unreachable file."""
+
+
 def host_allowed(url, hosts=FETCH_HOSTS):
     try:
         parsed = urllib.parse.urlparse(url)
@@ -112,13 +117,48 @@ def upstream_value(fact, fetch=fetch):
     text = fetch(fact["upstream"])
     m = re.search(fact["extract"], text, re.M)
     if not m:
-        raise UpstreamError(f"{fact['upstream']}: extract pattern matched nothing")
+        raise ExtractError(f"{fact['upstream']}: extract pattern matched nothing")
     return m.group(1)
 
 
 def agrees(fact, current):
-    """True when the value upstream states is the one the fact records."""
-    return norm_value(current) in norm_value(fact["value"])
+    """True when the value upstream states is exactly the one the fact records.
+    Exact normalised equality — a truncated oracle match ("1.6" vs "1.6.0") is
+    not agreement."""
+    return norm_value(current) == norm_value(fact["value"])
+
+
+def value_in_hit(fact, hit):
+    """True when the fact's normalised value appears inside a pattern match.
+    Containment, not equality: a pattern may match a span that carries the value
+    (e.g. "NU7 ... Testnet ... 4,465,026"), but a truncated or extended hit can
+    never pass — digits must not be glued to more digits."""
+    val, hay = norm_value(fact["value"]), norm_value(hit)
+    if not val:
+        return False
+    i = hay.find(val)
+    while i != -1:
+        before = hay[i - 1] if i else ""
+        after = hay[i + len(val)] if i + len(val) < len(hay) else ""
+        bad = (val[0].isdigit() and before.isdigit()) or (val[-1].isdigit() and after.isdigit())
+        if not bad:
+            return True
+        i = hay.find(val, i + 1)
+    return False
+
+
+NEGATION_RE = re.compile(r"(?i)\b(?:no longer|not|never|without|isn't|is not|doesn't|does not|do not|don't|nor|no)\b")
+
+
+def negated(line, start, end):
+    """True when a negation cue appears in the sentence containing [start, end).
+
+    Only the sentence segment is considered — a negation in a neighbouring
+    sentence must not excuse a positive stale claim."""
+    seg = line.rfind(".", 0, start)
+    for c in ";:!":
+        seg = max(seg, line.rfind(c, 0, start))
+    return NEGATION_RE.search(line[seg + 1 : end]) is not None
 
 
 def load_facts(path=FACTS):
@@ -163,6 +203,7 @@ def main():
 
     facts = load_facts()
     mismatches, warnings = [], []
+    oracles = oracles_compared = 0
     today = date.today()
 
     for f in facts:
@@ -173,12 +214,17 @@ def main():
         if errors:
             mismatches += [f"docs/versioned-facts.md: {e}" for e in errors]
             continue
+        if "upstream" in f:
+            oracles += 1
         if args.upstream and "upstream" in f:
             try:
                 current = upstream_value(f)
+            except ExtractError as e:
+                warnings.append(f"{f['id']}: oracle fetched but extract failed ({e}) — upstream format may have moved")
             except UpstreamError as e:
-                warnings.append(f"{f['id']}: could not read upstream ({e})")
+                warnings.append(f"{f['id']}: could not fetch upstream ({e})")
             else:
+                oracles_compared += 1
                 if not agrees(f, current):
                     mismatches.append(f"docs/versioned-facts.md: {f['id']} = '{f['value']}' but {f['upstream']} now says '{current}'")
         if "pattern" not in f:
@@ -191,10 +237,12 @@ def main():
                 for m in rx.finditer(line):
                     rel = os.path.relpath(path, ROOT)
                     if f.get("kind") == "forbid":
+                        if f.get("negation") == "true" and negated(line, m.start(), m.end()):
+                            continue
                         mismatches.append(
                             f"{rel}:{i}: '{m.group(0)}' is a stale claim — {f['id']} ({f.get('source', 'see versioned-facts.md')})"
                         )
-                    elif f["value"] not in m.group(0) and m.group(0) not in f["value"]:
+                    elif not value_in_hit(f, m.group(0)):
                         mismatches.append(
                             f"{rel}:{i}: '{m.group(0)}' conflicts with {f['id']} = '{f['value']}'"
                         )
@@ -206,7 +254,11 @@ def main():
     if mismatches:
         print(f"\n{len(mismatches)} possible stale reference(s); update the file or versioned-facts.md")
         return 1
-    print(f"{len(facts)} facts checked, {len(warnings)} age warning(s), no contradictions")
+    summary = f"{len(facts)} facts checked"
+    if args.upstream:
+        summary += f", {oracles_compared}/{oracles} oracles compared"
+    summary += f", {len(warnings)} warning(s), no contradictions"
+    print(summary)
     return 0
 
 

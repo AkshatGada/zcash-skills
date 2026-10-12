@@ -48,18 +48,23 @@ file whose match text differs from `value`.
 ## Machine-checkable facts
 
 Each block maps a `pattern` (regex appearing in repo docs) to the canonical
-`value`. The checker fails on mismatched matches; anything without a pattern is
-date-only. Keep one `pattern` per fact; make it match the whole token
+`value`. A doc line is stale when the match does not contain the value after
+normalisation (backticks, commas, spaces and case ignored) — a pattern may match
+a span around the value, but a truncated value never passes. Anything without a
+pattern is date-only. Keep one `pattern` per fact; make it match the whole token
 (e.g. `name:version`). A block may instead set `kind: forbid` (no `value`
 needed): every match of the pattern is then a stale-claim failure — use this
 for "X does not exist / X is not required" statements that upstream has since
-made false.
+made false. With `negation: true`, a forbid match inside a negated sentence
+("X is *not* a consensus rule") is skipped, so the fact can cover claims that
+correct prose correctly denies.
 
 A block can also name its oracle: `upstream` is a raw URL of the file that
 states the value, and `extract` is a regex whose first group captures it.
-`python3 docs/check-facts.py --upstream` compares every oracle with `value`, and
-the PR fact check uses the same oracles for the lines a PR changes. Prefer an
-oracle whenever the value lives in a parseable upstream file.
+`python3 docs/check-facts.py --upstream` compares every oracle with `value` by
+exact normalised equality, and the PR fact check uses the same oracles for the
+lines a PR changes. Prefer an oracle whenever the value lives in a parseable
+upstream file — this works for `.rst` ZIP sources as well as `.md`.
 
 ```facts
 id: zakura-image
@@ -73,7 +78,7 @@ extract: const ZAKURA_IMAGE: &str = "([^"]+)"
 
 ```facts
 id: ths-rust-toolchain
-value: Rust 1.98.0
+value: 1.98.0
 pattern: Rust 1\.[0-9]+\.[0-9]+|rust-toolchain[^;\n]*1\.[0-9]+\.[0-9]+
 verified: 2026-10-02
 source: rust-toolchain.toml
@@ -143,4 +148,31 @@ kind: forbid
 pattern: transactions are (?:all )?version 6|(?:all|only) transactions (?:are|use|must be) (?:v6|version 6)|v6[- ]only transactions|version 6 transactions only
 verified: 2026-10-08
 source: ZIPs 229/2003 — NU6.3 permits v4, v5, and v6; v6 is required for Ironwood outputs and v4 is disallowed only from NU7
+```
+```facts
+id: nu63-orchard-receives
+kind: forbid
+negation: true
+pattern: (?i)\b(?:new|incoming)\s+(?:shielded\s+)?(?:value|notes?|outputs?)\b[^\n.;:!]{0,30}\b(?:goes?|flows?|sent|moves?|moved|enters?|entered|to|into)\b[^\n.;:!]{0,15}\bOrchard\b|\bOrchard\b[^\n.;:!]{0,40}\b(?:receives?|accepts?|gets)\s+(?:new|incoming)\b
+verified: 2026-10-12
+source: ZIP 229/NU6.3 — new shielded value goes to Ironwood; Orchard is spend-only for new value post-NU6.3
+```
+
+```facts
+id: zip317-consensus
+kind: forbid
+negation: true
+pattern: (?i)\bZIPs? ?317\b[^\n]{0,50}\bconsensus\b|\bconsensus\b[^\n]{0,50}\bZIPs? ?317\b
+verified: 2026-10-12
+source: ZIP 317 — the proportional fee is a wallet convention, not a consensus validity rule
+```
+
+```facts
+id: zip320-tex-fixture
+value: t1VmmGiyjVNeCjxDZzg7vZmd99WyzVby9yC
+pattern: t1VmmGiyjVNeCjxDZzg7vZmd99WyzVby9yC
+verified: 2026-10-12
+source: ZIP 320 reference implementation — transparent P2PKH fixture address (rst oracle coverage)
+upstream: https://raw.githubusercontent.com/zcash/zips/main/zips/zip-0320.rst
+extract: bs58check\.decode\('([^']+)'\)
 ```

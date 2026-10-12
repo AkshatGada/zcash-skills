@@ -1,0 +1,60 @@
+name: fact-drift
+
+# Nightly: run check-facts.py --upstream so oracle drift — an upstream file
+# that moved, a 404, or a value that no longer matches — files an issue
+# instead of going unnoticed. PR/push checks stay offline; this job is the
+# one place upstream is compared on a schedule. Hard contradictions mark the
+# run failed; fetch/extract problems still open an issue but leave it green.
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: compare facts against upstream oracles
+        id: check
+        run: |
+          set +e
+          python3 docs/check-facts.py --upstream > "$RUNNER_TEMP/drift.txt" 2>&1
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+          echo "warns=$(grep -c '^WARN' "$RUNNER_TEMP/drift.txt" || true)" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/drift.txt"
+
+      - name: file or update a drift issue
+        if: steps.check.outputs.status != '0' || steps.check.outputs.warns != '0'
+        run: |
+          issue=$(gh issue list -R "$GITHUB_REPOSITORY" --state open \
+            --search '"fact-drift" in:title' --json number --jq '.[0].number // empty')
+          {
+            echo "check-facts.py --upstream on $(date -u +%F):"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/drift.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/drift-issue.md"
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" -R "$GITHUB_REPOSITORY" -F "$RUNNER_TEMP/drift-issue.md" > /dev/null
+          else
+            gh issue create -R "$GITHUB_REPOSITORY" \
+              --title "fact-drift: oracles disagree with versioned-facts.md" \
+              -F "$RUNNER_TEMP/drift-issue.md" > /dev/null
+          fi
+
+      - name: fail on contradictions
+        if: steps.check.outputs.status != '0'
+        run: exit 1

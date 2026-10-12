@@ -47,7 +47,8 @@ There is no build. Before committing, verify:
   `python3 docs/gen-manifest.py` after adding/removing `.md` files;
 - versioned claims (heights, image tags, crate versions) match
   `docs/versioned-facts.md` — `python3 docs/check-facts.py` must pass
-  (`--upstream` also compares each fact with its upstream oracle);
+  (`--upstream` also compares each fact with its upstream oracle; the nightly
+  `fact-drift` workflow runs it and files an issue on drift);
 - `python3 -m unittest discover -s tests` passes if you touched `docs/*.py`.
 
 On a PR, list the upstream files, ZIPs or docs pages behind your changes under
