@@ -7,6 +7,8 @@
 | HTTP client, endpoints, errors, and runtime validation | `web/src/lib/api/` |
 | Server-backed data and query keys | `web/src/hooks/queries.ts` |
 | Send, faucet, mine, and query invalidation | `web/src/hooks/mutations.ts` |
+| Send/Faucet fingerprints, retention, cross-tab locks, and restoration | `web/src/hooks/payment-identity.ts` |
+| Keyed payment observation, terminal cleanup, and recovery controls | `web/src/features/wallet/PaymentStatus.tsx`, `PaymentUpdates.tsx` |
 | SSE topic invalidation | `web/src/hooks/useServerEvents.ts` |
 | Balance and activity UI | `web/src/features/wallet/` |
 | Block, transaction, and address views | `web/src/features/explorer/` |
@@ -17,7 +19,13 @@ The API client validates Rust responses with Zod at the boundary. Wallet account
 
 ## Mutation and event behavior
 
-`useSend` and `useFaucet` attach idempotency keys and invalidate wallet-related queries on success. Keys come from `operationKey(...)`, but the two hooks differ: `useSend` stores `ths:send:{json-of-variables}` in `sessionStorage`, so a same-session retry replays the same key and clears it on success. `useFaucet` stores `ths:faucet:{account:pool:amount}` in **`localStorage`** under a `navigator.locks` lock (`withFaucetLock` — it throws when locks are unavailable), mirrors the key into a per-tab `sessionStorage` `{name}:tab` entry, migrates legacy sessionStorage keys, and clears the shared key only when the activity reaches `confirmed` and the key still matches (`clearIfMatches`). `useFaucet` returns `{ activity, key }`, not bare `Activity`. A claim that a retry is a fresh payment (or that it is deduplicated) must name which mechanism it means — sessionStorage vs the cross-tab faucet lock — and test the corresponding user action. `useServerEvents` maps `wallet` to accounts/activity/send-quote, `chain` to status/blocks/mempool plus the `block`/`transaction`/`address` detail prefixes, `sync` to status, and `mining` to `['mining']`. An unknown topic invalidates all mapped keys. Check the actual key and event when a view is stale; adding local mirrored state will hide the broken invalidation.
+`useSend` and `useFaucet` both use `usePaymentMutation`. Trace identity through `payment-identity.ts`: `paymentName` fingerprints the intent, `withPaymentLock` coordinates tabs through `navigator.locks`, and `retainPayment` writes a persistent `localStorage` record, a shared fingerprint key, and this tab's `sessionStorage` key before POST. It verifies retention and attempts rollback on a write failure; missing locks or failed retention blocks submission. Restoration migrates legacy session keys and observes retained payments without automatically POSTing. `operationKey` still serves mining; it is not the Send/Faucet retention mechanism.
+
+Capture the original key at the user action so a queued retry cannot become a new payment if terminal cleanup wins the lock first. An uncertain response retains that key across retries and reloads. Both mutations return `{ activity, key }`, with optional `cleanupError`. They cache the returned activity under `queryKeys.payment(key)` and invalidate wallet-related queries; HTTP success can mean pending admission. Only a terminal activity (`confirmed` or `failed`) triggers terminal identity cleanup. The rejection path releases identity only after a rejected request and a keyed lookup proving the claim absent; a failed lookup retains it. `clearPayment` compares stored identities before removing them, so delayed cleanup cannot erase another tab's newer key. A cleanup error must not change the known payment outcome.
+
+`usePaymentStatus` polls the keyed activity until terminal; `PaymentStatus` handles terminal notification and cleanup, and `PaymentUpdates` keeps displayed outcomes readable after retained identity is released. Preserve server-backed status in Query and caller identity in the retention layer. Distinguish reading status, resuming the original request, and deliberately starting a new payment in tests and UI labels.
+
+`useServerEvents` maps `wallet` to accounts/activity/send-quote, `chain` to status/blocks/mempool plus the `block`/`transaction`/`address` detail prefixes, `sync` to status, and `mining` to `['mining']`. An unknown topic invalidates all mapped keys. Check the actual key and event when a view is stale; adding local mirrored state will hide the broken invalidation.
 
 The activity query key is `['activity', limit]` and block-page key is `['blocks', before ?? 'tip']`; invalidating the shorter prefixes reaches all mounted variants. Detail keys are `['block', id]`, `['transaction', txid]`, `['address', address]` — verify the current `TOPICS` map covers a key before asserting a refresh gap; this mapping has changed before.
 
@@ -25,9 +33,9 @@ The SSE endpoint emits topics without event IDs or replay. If a connection drops
 
 ### Worked response-state diagnosis
 
-`SendDialog` can display a success message saying the transaction was mined. The server's `confirm_after_mining` can return the activity with `broadcast` status after an auto-mine failure, so successful HTTP completion alone does not prove inclusion. If the toast says mined while activity remains broadcast, inspect the response `status`, txid, and later activity update before changing SSE or query cache code. A view should label the state actually returned by the server. The closest tests are `SendDialog.test.tsx`, `WalletPage.test.tsx`, and `schemas.test.ts`; add a case for the divergent state if changing this flow.
+**Input:** Send receives HTTP 202 with `status: preparing` and an empty txid. Show accepted/pending state and observe that key; the worker may prepare and broadcast after the dialog closes. A transient `last_error` while pending is not terminal failure. Show confirmation only when the keyed activity reports `confirmed`; a terminal `failed` result keeps its reason. Exercise acceptance, later confirmation/failure, lost response, and storage cleanup separately in `SendDialog.test.tsx`, `ActivityList.test.tsx`, and the shared Send/Faucet cases in `hooks/faucet.test.tsx`. A mocked status transition proves the UI behavior, not a real chain effect.
 
-`SendDialog` also checks the requested amount against the displayed account pool total. The wallet SDK decides actual spendability and fee at proposal time; the server can still return insufficient funds. For a retry or error-state change, test the user action and resulting request identities — `operationKey` sessionStorage reuse, not only the presence of one UUID-shaped key.
+For an amount change, inspect `SendDialog`'s form and fee-quote validation. A displayed pool total is not proof of spendability; the server and wallet SDK still govern proposal validity. For identity changes, use the existing tests for cross-tab delayed cleanup, restored pending keys, unavailable locks/storage, and replay after terminal cleanup wins a queued lock. Assert the original request key and absence of unintended POSTs, not only a UUID-shaped value. Keep route, exact amount, and absent-versus-empty memo fingerprints distinct.
 
 ## UI and verification
 

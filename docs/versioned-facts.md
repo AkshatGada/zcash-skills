@@ -41,8 +41,8 @@ file whose match text differs from `value`.
 | Wallet DB schema names | `ext_tsz_*` — intentionally kept for migration stability despite the crate rename | 2026-10-02 | `wallet.rs` comment |
 | Dev API env var | `THS_DEV_API` (not `TSZ_DEV_API`) | 2026-10-02 | `AGENTS.md` |
 | Regtest NU activation | NU6–NU6.3 at height 1 in generated `zakurad.toml`; `regtest_network().nu7 = None` | 2026-10-06 | `main.rs`, `wallet.rs` |
-| Address-faucet idempotency | `faucet_address` requires a key; `claim_address_faucet` persists to `address_faucets`; replay resumes the operation; `activities`/`address_faucets` share one key space (`IdempotencyConflict`) | 2026-10-08 | `api.rs` `execute_address_faucet`, `db.rs` |
-| Address-faucet replay tests | `confirmed_address_faucet_replays_without_sending_a_second_payment`, `address_faucet_replay_survives_restart_and_rejects_conflicting_intents`, `address_faucet_reconciles_the_original_txid_after_a_lost_broadcast_response` | 2026-10-08 | `api.rs`, `db.rs` test modules |
+| Address-faucet idempotency | `faucet_address` requires a key; internal user destinations use `activities`, external destinations use `address_faucets`; replay observes retained intent while the worker progresses it; both stores share one key space (`IdempotencyConflict`) | 2026-10-15 | `api/payments.rs`, `payments/progression.rs`, `db/` |
+| Address-faucet replay tests | `confirmed_address_faucet_replays_without_sending_a_second_payment`, `address_faucet_replay_survives_restart_and_rejects_conflicting_intents`, `address_faucet_reconciles_the_original_txid_after_a_lost_broadcast_response` | 2026-10-15 | `crates/ths-server/tests/unit/api/payments/tests.rs`, `crates/ths-server/tests/unit/db/address_faucet/tests.rs`, `crates/ths-server/tests/unit/payments/submission/tests.rs` |
 | CI live cases | `activity_recovery` runs `broadcast_recovers_after_auto_mine_failure` + `concurrent_identical_sends_have_one_chain_effect` + `address_faucet_retry_after_server_restart_pays_each_destination_once`; the 10k-block and other address-faucet cases are not in CI | 2026-10-08 | `ci.yml` |
 
 ## Machine-checkable facts
@@ -138,8 +138,8 @@ extract: ^\[workspace\.package\]\n(?:.*\n)*?version = "([^"]+)"
 id: address-faucet-idempotency
 kind: forbid
 pattern: faucet[^\n]{0,100}(?:no idempotency|(?:creates?|has|requires?|needs?|with) no activity row|does not (?:create|persist)[^\n]{0,30}(?:activity|row)|without (?:an? )?idempotency)|(?:no idempotency|no activity row)[^\n]{0,60}faucet
-verified: 2026-10-08
-source: crates/ths-server/src/api.rs — execute_address_faucet requires the key and persists via claim_address_faucet; claims of a keyless external faucet are stale
+verified: 2026-10-15
+source: crates/ths-server/src/api/payments.rs — faucet_address requires the key and durably claims an internal account activity or external address faucet before background execution; claims of a keyless external faucet are stale
 ```
 
 ```facts

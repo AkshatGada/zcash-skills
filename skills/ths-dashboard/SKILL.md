@@ -12,7 +12,7 @@ Keep the server wallet snapshot authoritative for balances. Reuse Zod schemas, q
 ## Core workflow
 
 1. Trace the response from Rust endpoint through Zod schema, query key, hook, and affected component.
-2. For a mutation, check both successful invalidation and later SSE-driven refresh.
+2. For Send/Faucet, trace retained identity before POST and keyed status observation after admission. Keep pending acceptance distinct from terminal confirmation or failure; check invalidation and later SSE-driven refresh separately.
 3. Test valid, pending, error, and stale-result states at the real query owner.
 4. Run the web checks and verify the built frontend artifact if the claim is about a running container.
 

@@ -7,7 +7,7 @@ description: Use when changing Thus Spoke Zakura wallet sync, treasury rewards, 
 
 Read the current repository `AGENTS.md` and [wallet server](references/wallet-server.md). Trace node RPC and lightwalletd data through the pinned Zakura wallet crates, the server snapshot, and the API result. Use `zcash-wallet`, `zcash-payments`, or `zcash-light-client` for the Zcash semantics touched by the change.
 
-Keep accounts 1–5 user-facing and account 6 internal. Preserve the wallet snapshot as the balance source. For account Send and faucet, retain the claim-before-work pattern (`claim_transfer` / `claim_faucet` / `claim_address_faucet` persist intent keyed by the idempotency key before any wallet call), transaction identity, and activity recovery; the address faucet keeps the same contract in its own `address_faucets` table. Use the existing `ApiError`/`ApiResult` pattern and repository test seams. Run Rust checks after `crates/` changes and select a live Docker case when a real proof, node, or retained wallet store is necessary to establish the claim.
+Keep accounts 1–5 user-facing and account 6 internal. Preserve the wallet snapshot as the balance source. Send and faucet POSTs retain intent before wallet work; pending admission is distinct from payment confirmation. Trace the keyed status read and background worker separately. Account payments use `activities`; external-address faucets use `address_faucets`, sharing one idempotency key space. Preserve the original key across uncertain responses and restarts. Use the existing `ApiError`/`ApiResult` pattern and repository test seams. Run Rust checks after `crates/` changes and select a live Docker case when a real proof, node, or retained wallet store is necessary to establish the claim.
 
 ## Core workflow
 
@@ -18,6 +18,6 @@ Keep accounts 1–5 user-facing and account 6 internal. Preserve the wallet snap
 
 ## Review examples
 
-- A pending Send replay returns the stored activity but can still drive `submit_prepared` → broadcast and mining. Check activity identity and side effects separately.
+- A pending Send replay returns retained intent; the background worker owns execution. Verify that POST admission and keyed GETs do not perform wallet, broadcast, or mining work, and that the worker progresses the same intent after the client disconnects.
 - A wallet sync may publish new account balances before later activity reconciliation fails. Inspect status and balance publication at the actual failure step.
-- The account faucet and address faucet share the claim-before-work contract and one idempotency key space, but persist in different tables (`activities` vs `address_faucets`) — a key used by one is rejected by the other. Name the selected endpoint before claiming its recovery behavior.
+- An address faucet for a published user-account destination uses an account activity; an external destination uses `address_faucets`. Preserve an existing external claim's store on replay, and reject conflicting intent across the shared key space. Name the destination route before claiming its recovery behavior.
